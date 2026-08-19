@@ -13,6 +13,9 @@
     <meta name="apple-mobile-web-app-title" content="Portal Aulas">
     <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3389/3389081.png">
 
+    <!-- Supabase JS Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -97,17 +100,6 @@
 
         .btn-primary {
             background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
-            color: white;
-        }
-
-        .btn-outline {
-            background: rgba(255, 255, 255, 0.15);
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-        }
-
-        .btn-outline:hover {
-            background: rgba(255, 255, 255, 0.25);
             color: white;
         }
 
@@ -382,6 +374,13 @@
             padding: 3rem 1rem;
             color: var(--text-muted);
         }
+
+        .loading-spinner {
+            text-align: center;
+            padding: 4rem 1rem;
+            font-weight: 600;
+            color: var(--primary);
+        }
     </style>
 </head>
 <body>
@@ -390,11 +389,7 @@
         <div class="header-content">
             <h1>📖 Portal de Aulas</h1>
             <div class="header-actions">
-                <button class="btn btn-outline" onclick="exportData()" title="Baixar cópia de segurança">💾 Backup</button>
-                <button class="btn btn-outline" onclick="document.getElementById('import-file').click()" title="Restaurar aulas salvas">📥 Importar</button>
-                <input type="file" id="import-file" accept=".json" style="display:none;" onchange="importData(event)">
                 <button class="btn" id="btn-install" style="display:none;" onclick="installPWA()">📲 Instalar App</button>
-                <button class="btn" id="btn-new-book" onclick="openModal('modal-book')">+ Módulo</button>
                 <button class="btn btn-primary" id="btn-new-lesson" style="display:none;" onclick="openModal('modal-lesson')">+ Adicionar Aula (.html)</button>
             </div>
         </div>
@@ -404,32 +399,6 @@
     <div class="filter-tabs" id="filter-tabs" style="display:none;"></div>
 
     <main id="app"></main>
-
-    <!-- Modal Novo Módulo -->
-    <div class="modal-overlay" id="modal-book">
-        <div class="modal">
-            <h2>Criar Novo Módulo / Termo</h2>
-            <div class="form-group">
-                <label for="book-parent">Livro Principal</label>
-                <select id="book-parent">
-                    <option value="Livro 01">📘 LIVRO 01 (Basic)</option>
-                    <option value="Livro 02">📙 LIVRO 02 (Intermediate)</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="book-title">Nome do Módulo / Termo</label>
-                <input type="text" id="book-title" placeholder="Ex: BASIC 03 - MID TERM">
-            </div>
-            <div class="form-group">
-                <label for="book-desc">Descrição / Detalhes (Opcional)</label>
-                <input type="text" id="book-desc" placeholder="Ex: Lições 1 a 6">
-            </div>
-            <div class="modal-actions">
-                <button class="btn" onclick="closeModal('modal-book')">Cancelar</button>
-                <button class="btn btn-primary" onclick="createBook()">Salvar</button>
-            </div>
-        </div>
-    </div>
 
     <!-- Modal Nova Aula -->
     <div class="modal-overlay" id="modal-lesson">
@@ -449,20 +418,39 @@
             </div>
             <div class="modal-actions">
                 <button class="btn" onclick="closeModal('modal-lesson')">Cancelar</button>
-                <button class="btn btn-primary" onclick="createLesson()">Publicar Aula</button>
+                <button class="btn btn-primary" id="btn-submit-lesson" onclick="createLesson()">Publicar Aula</button>
             </div>
         </div>
     </div>
 
     <script>
-        const STORAGE_KEY = 'portal_aulas_db_v2';
+        // ==========================================
+        // CREDENCIAIS CONFIGURADAS DO SUPABASE
+        // ==========================================
+        const SUPABASE_URL = 'https://ssmumauwgmlfouljcyox.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_ziirIQJFtWDtcQXdvLMOzQ_K_RRGjfd';
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Grade curricular fixa dos módulos
+        const STATIC_MODULES = [
+            { id: 'b1_1', book: 'Livro 01', title: 'BASIC 01 - MID TERM', desc: 'Primeira metade do nível Básico 01' },
+            { id: 'b1_2', book: 'Livro 01', title: 'BASIC 01 - END TERM', desc: 'Segunda metade do nível Básico 01' },
+            { id: 'b1_3', book: 'Livro 01', title: 'BASIC 02 - MID TERM', desc: 'Primeira metade do nível Básico 02' },
+            { id: 'b1_4', book: 'Livro 01', title: 'BASIC 02 - END TERM', desc: 'Segunda metade do nível Básico 02' },
+            { id: 'b2_1', book: 'Livro 02', title: 'INTERMEDIATE 01 - MID TERM', desc: 'Primeira metade do Intermediário 01' },
+            { id: 'b2_2', book: 'Livro 02', title: 'INTERMEDIATE 01 - END TERM', desc: 'Segunda metade do Intermediário 01' },
+            { id: 'b2_3', book: 'Livro 02', title: 'INTERMEDIATE 02 - MID TERM', desc: 'Primeira metade do Intermediário 02' },
+            { id: 'b2_4', book: 'Livro 02', title: 'INTERMEDIATE 02 - END TERM', desc: 'Segunda metade do Intermediário 02' }
+        ];
+
+        let allLessons = [];
         let currentView = 'books';
-        let selectedBookId = null;
-        let selectedLessonId = null;
+        let selectedModule = null;
+        let selectedLesson = null;
         let activeBookFilter = 'all';
         let deferredPrompt = null;
 
-        // PWA Install Prompt
+        // PWA Install
         window.addEventListener('beforeinstallprompt', (e) => {
             e.preventDefault();
             deferredPrompt = e;
@@ -482,78 +470,33 @@
             }
         }
 
-        // Banco de Dados Local
-        function getDB() {
-            const data = localStorage.getItem(STORAGE_KEY);
-            if (!data) {
-                const initialDB = {
-                    modules: [
-                        { id: 'b1_1', book: 'Livro 01', title: 'BASIC 01 - MID TERM', desc: 'Primeira metade do nível Básico 01', lessons: [] },
-                        { id: 'b1_2', book: 'Livro 01', title: 'BASIC 01 - END TERM', desc: 'Segunda metade do nível Básico 01', lessons: [] },
-                        { id: 'b1_3', book: 'Livro 01', title: 'BASIC 02 - MID TERM', desc: 'Primeira metade do nível Básico 02', lessons: [] },
-                        { id: 'b1_4', book: 'Livro 01', title: 'BASIC 02 - END TERM', desc: 'Segunda metade do nível Básico 02', lessons: [] },
-                        
-                        { id: 'b2_1', book: 'Livro 02', title: 'INTERMEDIATE 01 - MID TERM', desc: 'Primeira metade do Intermediário 01', lessons: [] },
-                        { id: 'b2_2', book: 'Livro 02', title: 'INTERMEDIATE 01 - END TERM', desc: 'Segunda metade do Intermediário 01', lessons: [] },
-                        { id: 'b2_3', book: 'Livro 02', title: 'INTERMEDIATE 02 - MID TERM', desc: 'Primeira metade do Intermediário 02', lessons: [] },
-                        { id: 'b2_4', book: 'Livro 02', title: 'INTERMEDIATE 02 - END TERM', desc: 'Segunda metade do Intermediário 02', lessons: [] }
-                    ]
-                };
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(initialDB));
-                return initialDB;
+        // Buscar aulas do Supabase
+        async function fetchLessons() {
+            const app = document.getElementById('app');
+            app.innerHTML = '<div class="loading-spinner">🔄 Sincronizando com o Supabase...</div>';
+
+            const { data, error } = await supabase
+                .from('lessons')
+                .select('*')
+                .order('created_at', { ascending: true });
+
+            if (error) {
+                alert('Erro ao carregar aulas do Supabase: ' + error.message);
+                allLessons = [];
+            } else {
+                allLessons = data || [];
             }
-            return JSON.parse(data);
-        }
 
-        function saveDB(db) {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-        }
-
-        // Exportação e Importação de Dados
-        function exportData() {
-            const db = getDB();
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(db));
-            const downloadAnchor = document.createElement('a');
-            downloadAnchor.setAttribute("href", dataStr);
-            downloadAnchor.setAttribute("download", `backup_portal_aulas_${new Date().toISOString().slice(0,10)}.json`);
-            document.body.appendChild(downloadAnchor);
-            downloadAnchor.click();
-            downloadAnchor.remove();
-        }
-
-        function importData(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const importedDB = JSON.parse(e.target.result);
-                    if (importedDB && importedDB.modules) {
-                        saveDB(importedDB);
-                        alert('Backup restaurado com sucesso!');
-                        render();
-                    } else {
-                        alert('Arquivo de backup inválido.');
-                    }
-                } catch (err) {
-                    alert('Erro ao ler o arquivo JSON.');
-                }
-            };
-            reader.readAsText(file);
-            event.target.value = '';
+            render();
         }
 
         function render() {
-            const db = getDB();
             const app = document.getElementById('app');
             const breadcrumb = document.getElementById('breadcrumb');
             const filterTabs = document.getElementById('filter-tabs');
-            const btnNewBook = document.getElementById('btn-new-book');
             const btnNewLesson = document.getElementById('btn-new-lesson');
 
             if (currentView === 'books') {
-                btnNewBook.style.display = 'inline-flex';
                 btnNewLesson.style.display = 'none';
                 filterTabs.style.display = 'flex';
                 breadcrumb.innerHTML = '<span>Painel Principal / Selecione o Livro e Termo</span>';
@@ -564,8 +507,8 @@
                     <button class="tab-btn ${activeBookFilter === 'Livro 02' ? 'active' : ''}" onclick="setBookFilter('Livro 02')">📙 LIVRO 02 (Intermediate)</button>
                 `;
 
-                const book1List = db.modules.filter(m => m.book === 'Livro 01');
-                const book2List = db.modules.filter(m => m.book === 'Livro 02');
+                const book1List = STATIC_MODULES.filter(m => m.book === 'Livro 01');
+                const book2List = STATIC_MODULES.filter(m => m.book === 'Livro 02');
 
                 let html = '';
 
@@ -577,7 +520,7 @@
                             </div>
                             <div class="grid">
                     `;
-                    book1List.forEach(mod => { html += renderCard(mod); });
+                    book1List.forEach(mod => { html += renderModuleCard(mod); });
                     html += `</div></section>`;
                 }
 
@@ -589,42 +532,37 @@
                             </div>
                             <div class="grid">
                     `;
-                    book2List.forEach(mod => { html += renderCard(mod); });
+                    book2List.forEach(mod => { html += renderModuleCard(mod); });
                     html += `</div></section>`;
                 }
 
                 app.innerHTML = html;
 
             } else if (currentView === 'lessons') {
-                btnNewBook.style.display = 'none';
                 btnNewLesson.style.display = 'inline-flex';
                 filterTabs.style.display = 'none';
 
-                const mod = db.modules.find(m => m.id === selectedBookId);
-                if (!mod) {
-                    currentView = 'books';
-                    render();
-                    return;
-                }
-
                 breadcrumb.innerHTML = `
                     <span class="nav-item" onclick="viewBooks()">Painel</span> / 
-                    <span style="font-weight:700; color: ${mod.book === 'Livro 01' ? 'var(--book1-color)' : 'var(--book2-color)'}">[${escapeHtml(mod.book)}]</span> 
-                    <span>${escapeHtml(mod.title)}</span>
+                    <span style="font-weight:700; color: ${selectedModule.book === 'Livro 01' ? 'var(--book1-color)' : 'var(--book2-color)'}">[${escapeHtml(selectedModule.book)}]</span> 
+                    <span>${escapeHtml(selectedModule.title)}</span>
                 `;
 
-                if (mod.lessons.length === 0) {
+                // Filtra as aulas deste módulo
+                const moduleLessons = allLessons.filter(l => l.book === selectedModule.book && l.module_title === selectedModule.title);
+
+                if (moduleLessons.length === 0) {
                     app.innerHTML = `
                         <div class="empty-state">
-                            <p>Nenhuma aula enviada para <strong>${escapeHtml(mod.title)}</strong> ainda.</p>
-                            <button class="btn btn-primary" onclick="openModal('modal-lesson')">+ Fazer Upload da Primeira Aula (.html)</button>
+                            <p>Nenhuma aula enviada para <strong>${escapeHtml(selectedModule.title)}</strong> ainda.</p>
+                            <button class="btn btn-primary" onclick="openModal('modal-lesson')">+ Enviar Primeira Aula (.html)</button>
                         </div>
                     `;
                     return;
                 }
 
                 // Ordenação numérica natural automática
-                const sortedLessons = [...mod.lessons].sort((a, b) => {
+                const sortedLessons = [...moduleLessons].sort((a, b) => {
                     return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
                 });
 
@@ -647,33 +585,23 @@
                 app.innerHTML = html;
 
             } else if (currentView === 'viewer') {
-                btnNewBook.style.display = 'none';
                 btnNewLesson.style.display = 'none';
                 filterTabs.style.display = 'none';
 
-                const mod = db.modules.find(m => m.id === selectedBookId);
-                const lesson = mod ? mod.lessons.find(l => l.id === selectedLessonId) : null;
-
-                if (!lesson) {
-                    currentView = 'lessons';
-                    render();
-                    return;
-                }
-
                 breadcrumb.innerHTML = `
                     <span class="nav-item" onclick="viewBooks()">Painel</span> / 
-                    <span class="nav-item" onclick="viewBook('${mod.id}')">${escapeHtml(mod.title)}</span> / 
-                    <span>${escapeHtml(lesson.title)}</span>
+                    <span class="nav-item" onclick="viewModule('${selectedModule.id}')">${escapeHtml(selectedModule.title)}</span> / 
+                    <span>${escapeHtml(selectedLesson.title)}</span>
                 `;
 
                 app.innerHTML = `
                     <div class="viewer-container">
                         <div class="viewer-header">
                             <div>
-                                <strong style="font-size:1rem;">${escapeHtml(lesson.title)}</strong>
-                                <span style="color:var(--text-muted); font-size:0.8rem; margin-left: 0.4rem;">(${escapeHtml(lesson.pages)})</span>
+                                <strong style="font-size:1rem;">${escapeHtml(selectedLesson.title)}</strong>
+                                <span style="color:var(--text-muted); font-size:0.8rem; margin-left: 0.4rem;">(${escapeHtml(selectedLesson.pages)})</span>
                             </div>
-                            <button class="btn" onclick="viewBook('${mod.id}')">&larr; Voltar</button>
+                            <button class="btn" onclick="viewModule('${selectedModule.id}')">&larr; Voltar</button>
                         </div>
                         <iframe id="lesson-frame"></iframe>
                     </div>
@@ -681,22 +609,22 @@
 
                 setTimeout(() => {
                     const frame = document.getElementById('lesson-frame');
-                    if (frame) frame.srcdoc = lesson.htmlContent;
+                    if (frame) frame.srcdoc = selectedLesson.html_content;
                 }, 50);
             }
         }
 
-        function renderCard(mod) {
+        function renderModuleCard(mod) {
+            const count = allLessons.filter(l => l.book === mod.book && l.module_title === mod.title).length;
             return `
-                <div class="card" onclick="viewBook('${mod.id}')">
+                <div class="card" onclick="viewModule('${mod.id}')">
                     <div class="card-header">
                         <div class="card-title">${escapeHtml(mod.title)}</div>
-                        <button class="btn-delete-card" onclick="deleteBook(event, '${mod.id}')">Excluir</button>
                     </div>
                     <div class="card-desc">${escapeHtml(mod.desc || '')}</div>
                     <div class="card-footer">
                         <span>Acessar lições &rarr;</span>
-                        <span class="badge-count">${mod.lessons.length} aula(s)</span>
+                        <span class="badge-count">${count} aula(s)</span>
                     </div>
                 </div>
             `;
@@ -709,54 +637,29 @@
 
         function viewBooks() {
             currentView = 'books';
-            selectedBookId = null;
-            selectedLessonId = null;
+            selectedModule = null;
+            selectedLesson = null;
             render();
         }
 
-        function viewBook(id) {
+        function viewModule(id) {
+            selectedModule = STATIC_MODULES.find(m => m.id === id);
             currentView = 'lessons';
-            selectedBookId = id;
-            selectedLessonId = null;
+            selectedLesson = null;
             render();
         }
 
         function viewLesson(id) {
+            selectedLesson = allLessons.find(l => l.id === id);
             currentView = 'viewer';
-            selectedLessonId = id;
             render();
         }
 
-        function createBook() {
-            const bookParent = document.getElementById('book-parent').value;
-            const title = document.getElementById('book-title').value.trim();
-            const desc = document.getElementById('book-desc').value.trim();
-
-            if (!title) {
-                alert('Por favor, informe o nome do módulo.');
-                return;
-            }
-
-            const db = getDB();
-            db.modules.push({
-                id: 'm_' + Date.now(),
-                book: bookParent,
-                title: title,
-                desc: desc,
-                lessons: []
-            });
-
-            saveDB(db);
-            closeModal('modal-book');
-            document.getElementById('book-title').value = '';
-            document.getElementById('book-desc').value = '';
-            render();
-        }
-
-        function createLesson() {
+        async function createLesson() {
             const title = document.getElementById('lesson-title').value.trim();
             const pages = document.getElementById('lesson-pages').value.trim();
             const fileInput = document.getElementById('lesson-file');
+            const submitBtn = document.getElementById('btn-submit-lesson');
 
             if (!title) {
                 alert('Por favor, digite o título da aula.');
@@ -768,54 +671,58 @@
                 return;
             }
 
+            submitBtn.disabled = true;
+            submitBtn.innerText = 'Enviando ao Supabase...';
+
             const file = fileInput.files[0];
             const reader = new FileReader();
 
-            reader.onload = function(e) {
+            reader.onload = async function(e) {
                 const htmlContent = e.target.result;
-                const db = getDB();
-                const mod = db.modules.find(m => m.id === selectedBookId);
 
-                if (mod) {
-                    mod.lessons.push({
-                        id: 'l_' + Date.now(),
-                        title: title,
-                        pages: pages,
-                        htmlContent: htmlContent
-                    });
-                    saveDB(db);
+                const { data, error } = await supabase
+                    .from('lessons')
+                    .insert([
+                        {
+                            book: selectedModule.book,
+                            module_title: selectedModule.title,
+                            title: title,
+                            pages: pages,
+                            html_content: htmlContent
+                        }
+                    ])
+                    .select();
+
+                submitBtn.disabled = false;
+                submitBtn.innerText = 'Publicar Aula';
+
+                if (error) {
+                    alert('Erro ao salvar no Supabase: ' + error.message);
+                } else {
+                    closeModal('modal-lesson');
+                    document.getElementById('lesson-title').value = '';
+                    document.getElementById('lesson-pages').value = '';
+                    fileInput.value = '';
+                    await fetchLessons();
                 }
-
-                closeModal('modal-lesson');
-                document.getElementById('lesson-title').value = '';
-                document.getElementById('lesson-pages').value = '';
-                fileInput.value = '';
-                render();
             };
 
             reader.readAsText(file);
         }
 
-        function deleteBook(event, id) {
+        async function deleteLesson(event, id) {
             event.stopPropagation();
-            if (confirm('Deseja excluir este módulo e todas as aulas dele?')) {
-                const db = getDB();
-                db.modules = db.modules.filter(m => m.id !== id);
-                saveDB(db);
-                render();
-            }
-        }
+            if (confirm('Deseja excluir esta aula permanentemente do Supabase?')) {
+                const { error } = await supabase
+                    .from('lessons')
+                    .delete()
+                    .eq('id', id);
 
-        function deleteLesson(event, id) {
-            event.stopPropagation();
-            if (confirm('Deseja excluir esta aula?')) {
-                const db = getDB();
-                const mod = db.modules.find(m => m.id === selectedBookId);
-                if (mod) {
-                    mod.lessons = mod.lessons.filter(l => l.id !== id);
-                    saveDB(db);
+                if (error) {
+                    alert('Erro ao excluir: ' + error.message);
+                } else {
+                    await fetchLessons();
                 }
-                render();
             }
         }
 
@@ -836,7 +743,7 @@
                 .replace(/'/g, '&#039;');
         }
 
-        document.addEventListener('DOMContentLoaded', render);
+        document.addEventListener('DOMContentLoaded', fetchLessons);
     </script>
 </body>
 </html>
