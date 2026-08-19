@@ -8,6 +8,7 @@
     <!-- Configurações PWA -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#1e1b4b">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Portal Aulas">
@@ -417,10 +418,17 @@
     </div>
 
     <script>
+        // Registrar Service Worker para PWA
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(() => console.log('Service Worker ativo com sucesso!'))
+                    .catch((err) => console.log('Erro ao registrar Service Worker:', err));
+            });
+        }
+
         const SUPABASE_URL = 'https://ssmumauwgmlfouljcyox.supabase.co';
         const SUPABASE_ANON_KEY = 'sb_publishable_ziirIQJFtWDtcQXdvLMOzQ_K_RRGjfd';
-        
-        // Cliente inicializado com nome isolado para evitar conflito
         const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         const STATIC_MODULES = [
