@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Portal de Aulas</title>
     
-    <!-- Configurações PWA (Celular / App) -->
+    <!-- Configurações PWA -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#1e1b4b">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -47,7 +47,6 @@
             flex-direction: column;
         }
 
-        /* Header */
         header {
             background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
             color: white;
@@ -103,7 +102,6 @@
             color: white;
         }
 
-        /* Navigation Bar & Filter Tabs */
         .nav-bar {
             max-width: 1200px;
             width: 100%;
@@ -158,7 +156,6 @@
             box-shadow: 0 2px 8px rgba(30, 27, 75, 0.3);
         }
 
-        /* Main */
         main {
             max-width: 1200px;
             width: 100%;
@@ -167,7 +164,6 @@
             flex: 1;
         }
 
-        /* Seções de Livros */
         .book-section {
             margin-bottom: 2rem;
             background: white;
@@ -200,7 +196,6 @@
         .book-section.sec-livro2 .book-section-header { border-bottom-color: #fef3c7; }
         .book-section.sec-livro2 .book-section-title { color: var(--book2-color); }
 
-        /* Grid de Cards */
         .grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -280,7 +275,6 @@
             text-decoration: underline;
         }
 
-        /* Visualizador de Aula */
         .viewer-container {
             background: var(--bg-card);
             border-radius: 12px;
@@ -308,7 +302,6 @@
             border: none;
         }
 
-        /* Modais */
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -349,7 +342,7 @@
             margin-bottom: 0.3rem;
         }
 
-        .form-group input, .form-group select {
+        .form-group input {
             width: 100%;
             padding: 0.65rem;
             border: 1px solid var(--border-color);
@@ -358,7 +351,7 @@
             outline: none;
         }
 
-        .form-group input:focus, .form-group select:focus {
+        .form-group input:focus {
             border-color: var(--primary);
         }
 
@@ -424,14 +417,12 @@
     </div>
 
     <script>
-        // ==========================================
-        // CREDENCIAIS CONFIGURADAS DO SUPABASE
-        // ==========================================
         const SUPABASE_URL = 'https://ssmumauwgmlfouljcyox.supabase.co';
         const SUPABASE_ANON_KEY = 'sb_publishable_ziirIQJFtWDtcQXdvLMOzQ_K_RRGjfd';
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        
+        // Cliente inicializado com nome isolado para evitar conflito
+        const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        // Grade curricular fixa dos módulos
         const STATIC_MODULES = [
             { id: 'b1_1', book: 'Livro 01', title: 'BASIC 01 - MID TERM', desc: 'Primeira metade do nível Básico 01' },
             { id: 'b1_2', book: 'Livro 01', title: 'BASIC 01 - END TERM', desc: 'Segunda metade do nível Básico 01' },
@@ -450,7 +441,6 @@
         let activeBookFilter = 'all';
         let deferredPrompt = null;
 
-        // PWA Install
         window.addEventListener('beforeinstallprompt', (e) => {
             e.preventDefault();
             deferredPrompt = e;
@@ -470,24 +460,28 @@
             }
         }
 
-        // Buscar aulas do Supabase
         async function fetchLessons() {
             const app = document.getElementById('app');
             app.innerHTML = '<div class="loading-spinner">🔄 Sincronizando com o Supabase...</div>';
 
-            const { data, error } = await supabase
-                .from('lessons')
-                .select('*')
-                .order('created_at', { ascending: true });
+            try {
+                const { data, error } = await dbClient
+                    .from('lessons')
+                    .select('*')
+                    .order('created_at', { ascending: true });
 
-            if (error) {
-                alert('Erro ao carregar aulas do Supabase: ' + error.message);
-                allLessons = [];
-            } else {
-                allLessons = data || [];
+                if (error) {
+                    console.error(error);
+                    app.innerHTML = `<div class="empty-state"><p style="color:var(--danger)">Erro no Supabase: ${error.message}</p></div>`;
+                    allLessons = [];
+                } else {
+                    allLessons = data || [];
+                    render();
+                }
+            } catch (err) {
+                console.error(err);
+                app.innerHTML = `<div class="empty-state"><p style="color:var(--danger)">Falha de conexão com a API.</p></div>`;
             }
-
-            render();
         }
 
         function render() {
@@ -548,7 +542,6 @@
                     <span>${escapeHtml(selectedModule.title)}</span>
                 `;
 
-                // Filtra as aulas deste módulo
                 const moduleLessons = allLessons.filter(l => l.book === selectedModule.book && l.module_title === selectedModule.title);
 
                 if (moduleLessons.length === 0) {
@@ -561,7 +554,6 @@
                     return;
                 }
 
-                // Ordenação numérica natural automática
                 const sortedLessons = [...moduleLessons].sort((a, b) => {
                     return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
                 });
@@ -680,7 +672,7 @@
             reader.onload = async function(e) {
                 const htmlContent = e.target.result;
 
-                const { data, error } = await supabase
+                const { data, error } = await dbClient
                     .from('lessons')
                     .insert([
                         {
@@ -713,7 +705,7 @@
         async function deleteLesson(event, id) {
             event.stopPropagation();
             if (confirm('Deseja excluir esta aula permanentemente do Supabase?')) {
-                const { error } = await supabase
+                const { error } = await dbClient
                     .from('lessons')
                     .delete()
                     .eq('id', id);
