@@ -430,6 +430,10 @@
         const SUPABASE_URL = 'https://ssmumauwgmlfouljcyox.supabase.co';
         const SUPABASE_ANON_KEY = 'sb_publishable_ziirIQJFtWDtcQXdvLMOzQ_K_RRGjfd';
         const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const OFFLINE_DB_NAME = 'portal-aulas-offline';
+        const OFFLINE_DB_VERSION = 1;
+        const LESSON_INDEX_STORE = 'lesson-index';
+        const LESSON_CONTENT_STORE = 'lesson-content';
 
         const STATIC_MODULES = [
             { id: 'b1_1', book: 'Livro 01', title: 'BASIC 01 - MID TERM', desc: 'Primeira metade do nível Básico 01' },
@@ -448,6 +452,8 @@
         let selectedLesson = null;
         let activeBookFilter = 'all';
         let deferredPrompt = null;
+        let isUsingOfflineIndex = false;
+        let selectedLessonLoadError = '';
 
         window.addEventListener('beforeinstallprompt', (e) => {
             e.preventDefault();
@@ -468,6 +474,85 @@
             }
         }
 
+        function openOfflineDatabase() {
+            return new Promise((resolve, reject) => {
+                if (!('indexedDB' in window)) {
+                    reject(new Error('Armazenamento offline indisponível neste navegador.'));
+                    return;
+                }
+
+                const request = indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
+
+                request.onupgradeneeded = () => {
+                    const database = request.result;
+                    if (!database.objectStoreNames.contains(LESSON_INDEX_STORE)) {
+                        database.createObjectStore(LESSON_INDEX_STORE, { keyPath: 'key' });
+                    }
+                    if (!database.objectStoreNames.contains(LESSON_CONTENT_STORE)) {
+                        database.createObjectStore(LESSON_CONTENT_STORE, { keyPath: 'id' });
+                    }
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function saveOfflineData(storeName, value) {
+            const database = await openOfflineDatabase();
+            return new Promise((resolve, reject) => {
+                const transaction = database.transaction(storeName, 'readwrite');
+                transaction.objectStore(storeName).put(value);
+                transaction.oncomplete = () => {
+                    database.close();
+                    resolve();
+                };
+                transaction.onerror = () => {
+                    database.close();
+                    reject(transaction.error);
+                };
+            });
+        }
+
+        async function getOfflineData(storeName, key) {
+            const database = await openOfflineDatabase();
+            return new Promise((resolve, reject) => {
+                const transaction = database.transaction(storeName, 'readonly');
+                const request = transaction.objectStore(storeName).get(key);
+                request.onsuccess = () => resolve(request.result || null);
+                request.onerror = () => reject(request.error);
+                transaction.oncomplete = () => database.close();
+                transaction.onerror = () => {
+                    database.close();
+                    reject(transaction.error);
+                };
+            });
+        }
+
+        async function saveLessonIndex(lessons) {
+            await saveOfflineData(LESSON_INDEX_STORE, {
+                key: 'all-lessons',
+                lessons,
+                savedAt: new Date().toISOString()
+            });
+        }
+
+        async function getCachedLessonIndex() {
+            const cached = await getOfflineData(LESSON_INDEX_STORE, 'all-lessons');
+            return cached?.lessons || [];
+        }
+
+        async function saveLessonContent(id, htmlContent) {
+            await saveOfflineData(LESSON_CONTENT_STORE, {
+                id,
+                html_content: htmlContent,
+                savedAt: new Date().toISOString()
+            });
+        }
+
+        async function getCachedLessonContent(id) {
+            return getOfflineData(LESSON_CONTENT_STORE, id);
+        }
+
         async function fetchLessons() {
             const app = document.getElementById('app');
             app.innerHTML = '<div class="loading-spinner">🔄 Sincronizando com o Supabase...</div>';
@@ -475,20 +560,54 @@
             try {
                 const { data, error } = await dbClient
                     .from('lessons')
-                    .select('*')
+                    .select('id, book, module_title, title, pages, created_at')
                     .order('created_at', { ascending: true });
 
                 if (error) {
-                    console.error(error);
-                    app.innerHTML = `<div class="empty-state"><p style="color:var(--danger)">Erro no Supabase: ${error.message}</p></div>`;
-                    allLessons = [];
-                } else {
-                    allLessons = data || [];
-                    render();
+                    throw error;
                 }
+
+                allLessons = data || [];
+                isUsingOfflineIndex = false;
+                saveLessonIndex(allLessons).catch(err => console.warn('Não foi possível atualizar o modo offline:', err));
+                render();
             } catch (err) {
                 console.error(err);
-                app.innerHTML = `<div class="empty-state"><p style="color:var(--danger)">Falha de conexão com a API.</p></div>`;
+                try {
+                    const cachedLessons = await getCachedLessonIndex();
+                    if (cachedLessons.length > 0) {
+                        allLessons = cachedLessons;
+                        isUsingOfflineIndex = true;
+                        render();
+                    } else {
+                        app.innerHTML = '<div class="empty-state"><p style="color:var(--danger)">Não foi possível conectar ao Supabase e ainda não há aulas salvas neste aparelho.</p></div>';
+                    }
+                } catch (cacheError) {
+                    console.error(cacheError);
+                    app.innerHTML = '<div class="empty-state"><p style="color:var(--danger)">Falha de conexão com a API.</p></div>';
+                }
+            }
+        }
+
+        async function loadLessonContent(id) {
+            try {
+                const { data, error } = await dbClient
+                    .from('lessons')
+                    .select('html_content')
+                    .eq('id', id)
+                    .single();
+
+                if (error) throw error;
+
+                await saveLessonContent(id, data.html_content).catch(err => console.warn('Não foi possível salvar esta aula para uso offline:', err));
+                return { htmlContent: data.html_content };
+            } catch (error) {
+                console.warn('Usando cópia offline da aula:', error);
+                const cachedLesson = await getCachedLessonContent(id);
+                if (cachedLesson?.html_content) {
+                    return { htmlContent: cachedLesson.html_content };
+                }
+                throw error;
             }
         }
 
@@ -670,7 +789,10 @@
         }
 
         function openLessonInNewTab() {
-            if (!selectedLesson) return;
+            if (!selectedLesson?.html_content) {
+                alert('Aguarde o carregamento da aula antes de abrir em uma nova aba.');
+                return;
+            }
             const enriched = enrichHtmlContent(selectedLesson.html_content);
             const blob = new Blob([enriched], { type: 'text/html;charset=utf-8' });
             const url = URL.createObjectURL(blob);
@@ -723,7 +845,7 @@
                     html += `</div></section>`;
                 }
 
-                app.innerHTML = html;
+                app.innerHTML = `${isUsingOfflineIndex ? '<p style="margin:0 0 1rem; color:var(--text-muted); font-size:0.82rem;">📴 Modo offline: usando as aulas salvas neste aparelho.</p>' : ''}${html}`;
 
             } else if (currentView === 'lessons') {
                 btnNewLesson.style.display = 'inline-flex';
@@ -791,9 +913,15 @@
                                 <button class="btn" onclick="viewModule('${selectedModule.id}')">&larr; Voltar</button>
                             </div>
                         </div>
-                        <iframe id="lesson-frame"></iframe>
+                        ${selectedLessonLoadError
+                            ? `<div class="empty-state"><p style="color:var(--danger)">${escapeHtml(selectedLessonLoadError)}</p><button class="btn" onclick="viewModule('${selectedModule.id}')">&larr; Voltar</button></div>`
+                            : selectedLesson.html_content
+                                ? '<iframe id="lesson-frame"></iframe>'
+                                : '<div class="loading-spinner">🔄 Carregando aula...</div>'}
                     </div>
                 `;
+
+                if (!selectedLesson.html_content) return;
 
                 setTimeout(() => {
                     const frame = document.getElementById('lesson-frame');
@@ -839,10 +967,24 @@
             render();
         }
 
-        function viewLesson(id) {
+        async function viewLesson(id) {
             selectedLesson = allLessons.find(l => l.id === id);
+            if (!selectedLesson) return;
             currentView = 'viewer';
+            selectedLessonLoadError = '';
             render();
+
+            try {
+                const result = await loadLessonContent(id);
+                if (!selectedLesson || selectedLesson.id !== id) return;
+                selectedLesson.html_content = result.htmlContent;
+                render();
+            } catch (error) {
+                console.error(error);
+                if (!selectedLesson || selectedLesson.id !== id) return;
+                selectedLessonLoadError = 'Não foi possível carregar esta aula. Conecte-se uma vez para salvá-la neste aparelho e vê-la offline depois.';
+                render();
+            }
         }
 
         async function createLesson() {
