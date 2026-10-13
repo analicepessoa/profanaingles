@@ -428,7 +428,7 @@
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js')
+                navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
                     .then(() => console.log('Service Worker ativo!'))
                     .catch((err) => console.log('Erro no Service Worker:', err));
             });
@@ -436,7 +436,7 @@
 
         const SUPABASE_URL = 'https://ssmumauwgmlfouljcyox.supabase.co';
         const SUPABASE_ANON_KEY = 'sb_publishable_ziirIQJFtWDtcQXdvLMOzQ_K_RRGjfd';
-        const dbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const dbClient = window.supabase?.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         const OFFLINE_DB_NAME = 'portal-aulas-offline';
         const OFFLINE_DB_VERSION = 1;
         const LESSON_INDEX_STORE = 'lesson-index';
