@@ -1,4 +1,4 @@
-const CACHE_NAME = 'portal-aulas-cache-v2';
+const CACHE_NAME = 'portal-aulas-cache-v3';
 const SUPABASE_CLIENT_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
 const APP_SHELL = ['./', './index.html', './manifest.json', './sw.js', SUPABASE_CLIENT_URL];
 

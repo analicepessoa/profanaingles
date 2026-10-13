@@ -304,6 +304,13 @@
             border: none;
         }
 
+        @media (max-width: 768px) {
+            body.lesson-open main { padding: 0 0.4rem; }
+            .viewer-container { height: auto; overflow: visible; }
+            .viewer-header { padding: 0.8rem; }
+            #lesson-frame { display: block; flex: none; min-height: 60vh; }
+        }
+
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -613,8 +620,25 @@
 
         // Injeta automaticamente o sistema de Zoom / Lightbox nas imagens da aula
         function enrichHtmlContent(rawHtml) {
+            // O HTML importado também precisa permitir o zoom nativo do celular.
+            const lessonDocument = new DOMParser().parseFromString(rawHtml, 'text/html');
+            lessonDocument.querySelectorAll('meta[name="viewport"]').forEach(meta => meta.remove());
+            const viewport = lessonDocument.createElement('meta');
+            viewport.name = 'viewport';
+            viewport.content = 'width=device-width, initial-scale=1, user-scalable=yes';
+            lessonDocument.head.appendChild(viewport);
+            rawHtml = '<!DOCTYPE html>\n' + lessonDocument.documentElement.outerHTML;
             const zoomCode = `
                 <style>
+                    @media (max-width: 768px) {
+                        html, body {
+                            height: auto !important;
+                            min-height: 0 !important;
+                            max-height: none !important;
+                            overflow-y: visible !important;
+                            touch-action: auto !important;
+                        }
+                    }
                     /* Estilo para tornar imagens clicáveis e com zoom no celular */
                     img, .book-image {
                         cursor: zoom-in !important;
@@ -705,6 +729,8 @@
                     });
 
                     function openZoom(src) {
+                        // Em telas pequenas, o zoom por gesto preserva a rolagem da aula.
+                        if (window.matchMedia('(max-width: 768px)').matches) return;
                         const overlay = document.getElementById('zoom-overlay');
                         const targetImg = document.getElementById('zoom-target-img');
                         targetImg.src = src;
@@ -800,6 +826,7 @@
         }
 
         function render() {
+            document.body.classList.toggle('lesson-open', currentView === 'viewer');
             const app = document.getElementById('app');
             const breadcrumb = document.getElementById('breadcrumb');
             const filterTabs = document.getElementById('filter-tabs');
@@ -916,7 +943,7 @@
                         ${selectedLessonLoadError
                             ? `<div class="empty-state"><p style="color:var(--danger)">${escapeHtml(selectedLessonLoadError)}</p><button class="btn" onclick="viewModule('${selectedModule.id}')">&larr; Voltar</button></div>`
                             : selectedLesson.html_content
-                                ? '<iframe id="lesson-frame"></iframe>'
+                                ? '<iframe id="lesson-frame" title="Conteúdo da aula" onload="fitLessonFrame(this)"></iframe>'
                                 : '<div class="loading-spinner">🔄 Carregando aula...</div>'}
                     </div>
                 `;
@@ -930,6 +957,33 @@
                     }
                 }, 50);
             }
+        }
+
+        function fitLessonFrame(frame) {
+            frame._heightObserver?.disconnect();
+            frame._removeResizeListener?.();
+            const lessonBody = frame.contentDocument?.body;
+            if (!lessonBody) return;
+            const resize = () => {
+                if (!frame.isConnected) {
+                    frame._heightObserver?.disconnect();
+                    frame._removeResizeListener?.();
+                    return;
+                }
+                if (window.matchMedia('(max-width: 768px)').matches) {
+                    const height = Math.ceil(Math.max(lessonBody.scrollHeight, lessonBody.offsetHeight)) + 24;
+                    if (frame.style.height !== height + 'px') frame.style.height = height + 'px';
+                } else {
+                    frame.style.height = '';
+                }
+            };
+            resize();
+            if ('ResizeObserver' in window) {
+                frame._heightObserver = new ResizeObserver(resize);
+                frame._heightObserver.observe(lessonBody);
+            }
+            window.addEventListener('resize', resize);
+            frame._removeResizeListener = () => window.removeEventListener('resize', resize);
         }
 
         function renderModuleCard(mod) {
